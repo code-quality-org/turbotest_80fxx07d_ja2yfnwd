@@ -1,0 +1,71 @@
+# Generates code coverage for a Java project and uploads it to GitHub's
+# code coverage API. Runs on pushes to main and on pull requests.
+name: Code Coverage
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      # On PRs, check out the head commit (not the merge commit) so coverage
+      # data matches the commit SHA we report to the upload endpoint.
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+
+      # JaCoCo is configured in pom.xml — `mvn verify` runs tests and
+      # generates the coverage report at target/site/jacoco/jacoco.xml.
+      - name: Build and test with coverage
+        run: mvn --batch-mode verify
+
+      # The upload endpoint expects Cobertura XML format. We use cover2cover
+      # (vendored in scripts/) to convert JaCoCo's output.
+      #
+      # Coverage upload requires a write token, which is not available for
+      # PRs from forks — skip the convert and upload for forked PRs.
+      - name: Convert JaCoCo to Cobertura
+        if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+        run: python3 scripts/cover2cover.py target/site/jacoco/jacoco.xml src/main/java/ > cobertura.xml
+
+      - name: Upload coverage artifact
+        if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+        uses: actions/upload-artifact@v4
+        with:
+          name: cobertura-report
+          path: cobertura.xml
+
+  # Separate job with minimal permissions for the coverage upload.
+  # Skipped for merge queue (coverage comment was already posted during PR)
+  # and fork PRs (artifact won't be uploaded).
+  upload-coverage:
+    needs: build
+    if: ${{ !cancelled() && needs.build.result == 'success' && github.event_name != 'merge_group' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      # TODO: Reduce to `code-quality: write` once that permission scope ships.
+      security-events: write
+    steps:
+      - name: Download coverage artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: cobertura-report
+
+      - uses: code-quality-org/upload-code-coverage-action@5d8f3aaf7ede8cfd10410e8f2dba0b2962cc295f
+        with:
+          file: cobertura.xml
+          language: Java
+          label: code-coverage/jacoco
