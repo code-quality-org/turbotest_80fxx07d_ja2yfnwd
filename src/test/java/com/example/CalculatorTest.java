@@ -32,4 +32,19 @@ class CalculatorTest {
     void divideByZero() {
         assertThrows(ArithmeticException.class, () -> calc.divide(1, 0));
     }
+
+    @Test
+    void modulo() {
+        assertEquals(1, calc.modulo(7, 3));
+    }
+
+    @Test
+    void power() {
+        assertEquals(8, calc.power(2, 3));
+    }
+
+    @Test
+    void powerOfZero() {
+        assertEquals(1, calc.power(5, 0));
+    }
 }
